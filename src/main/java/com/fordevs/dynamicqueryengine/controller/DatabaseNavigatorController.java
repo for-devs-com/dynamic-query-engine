@@ -2,81 +2,77 @@ package com.fordevs.dynamicqueryengine.controller;
 
 import com.fordevs.dynamicqueryengine.dto.DatabaseCredentials;
 import com.fordevs.dynamicqueryengine.service.DatabaseService;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.List;
-import java.util.Map;
 
-/**
- * Controller for handling database navigation requests.
- */
-@Slf4j
-@CrossOrigin(origins = "*", allowedHeaders = "*")
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/api/database")
 public class DatabaseNavigatorController {
 
     @Autowired
     private DatabaseService databaseService;
-    /**
-     * Connects to the database using dynamic data sources.
-     *
-     * @param databaseCredentials The database credentials provided in the request body.
-     * @return ResponseEntity with connection status.
-     */
-    @PostMapping("/connect-database")
-    public ResponseEntity<String> connectToDatabaseDynamically(@RequestBody DatabaseCredentials databaseCredentials) {
-        return databaseService.connectToDatabaseDynamically(databaseCredentials);
+
+    // Endpoint to connect to a database
+    @PostMapping("/connect")
+    public ResponseEntity<String> connectToDatabase(@RequestBody DatabaseCredentials credentials) {
+        try {
+            databaseService.connect(credentials);
+            return ResponseEntity.ok("Connected to the database successfully.");
+        } catch (SQLException e) {
+            return ResponseEntity.status(500).body("Failed to connect to the database: " + e.getMessage());
+        }
     }
 
-    /**
-     * Lists the tables in the database.
-     *
-     * @return ResponseEntity with the list of tables.
-     */
-    @GetMapping("/listTables")
-    public ResponseEntity<List<String>> listTables() {
-        return databaseService.listTables();
+    // Endpoint to list all tables
+    @GetMapping("/tables")
+    public ResponseEntity<List<String>> listTables(@RequestBody DatabaseCredentials credentials) {
+        try (Connection connection = databaseService.connect(credentials)) {
+            List<String> tables = databaseService.listTables(connection);
+            return ResponseEntity.ok(tables);
+        } catch (SQLException e) {
+            return ResponseEntity.status(500).body(null);
+        }
     }
 
-    /**
-     * Lists the columns of a table.
-     *
-     * @param tableName The name of the table.
-     * @return ResponseEntity with the list of columns.
-     */
-    @GetMapping("/columns/{tableName}")
-    public ResponseEntity<List<Map<String, Object>>> listColumns(@PathVariable String tableName) {
-        return databaseService.listColumns(tableName);
+    // Endpoint to list columns in a table
+    @GetMapping("/columns")
+    public ResponseEntity<List<String>> listColumns(@RequestBody DatabaseCredentials credentials, @RequestParam String tableName) {
+        try (Connection connection = databaseService.connect(credentials)) {
+            List<String> columns = databaseService.listColumns(connection, tableName);
+            return ResponseEntity.ok(columns);
+        } catch (SQLException e) {
+            return ResponseEntity.status(500).body(null);
+        }
     }
 
-    /**
-     * Gets the data of a table with pagination.
-     *
-     * @param tableName The name of the table.
-     * @param page      The page number.
-     * @param size      The number of rows per page.
-     * @return ResponseEntity with the table data.
-     */
-    @GetMapping("/data/{tableName}")
-    public ResponseEntity<Map<String, Object>> getTableData(
-            @PathVariable String tableName,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        return databaseService.getTableData(tableName, page, size);
+    // Endpoint to execute a query
+    @PostMapping("/query")
+    public ResponseEntity<?> executeQuery(@RequestBody DatabaseCredentials credentials, @RequestParam String query) {
+        try (Connection connection = databaseService.connect(credentials)) {
+            ResultSet resultSet = databaseService.executeQuery(connection, query);
+            // Assuming that you have some mechanism to handle the ResultSet (like streaming the results back or processing)
+            // You would handle the ResultSet and return an appropriate ResponseEntity.
+            // This part of the implementation depends on your existing setup.
+            return ResponseEntity.ok("Query executed successfully.");
+        } catch (SQLException e) {
+            return ResponseEntity.status(500).body("Failed to execute query: " + e.getMessage());
+        }
     }
 
-    /**
-     * Executes a SQL query.
-     *
-     * @param query The SQL query to be executed.
-     * @return ResponseEntity with the query result.
-     */
-    @PostMapping("/executeQuery")
-    public ResponseEntity<List<Map<String, Object>>> executeQuery(@RequestBody String query) {
-        return databaseService.executeQuery(query);
+    // Endpoint to close a database connection
+    @PostMapping("/close")
+    public ResponseEntity<String> closeConnection(@RequestBody DatabaseCredentials credentials) {
+        try (Connection connection = databaseService.connect(credentials)) {
+            databaseService.closeConnection(connection);
+            return ResponseEntity.ok("Connection closed successfully.");
+        } catch (SQLException e) {
+            return ResponseEntity.status(500).body("Failed to close the connection: " + e.getMessage());
+        }
     }
 }

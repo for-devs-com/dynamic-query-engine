@@ -1,128 +1,99 @@
 package com.fordevs.dynamicqueryengine.config;
 
+import com.fordevs.dynamicqueryengine.connector.DatabaseConnector;
 import com.fordevs.dynamicqueryengine.dto.DatabaseCredentials;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Service class to manage dynamic data sources.
- * It provides methods to create and test connections, cache data sources, and handle JdbcTemplate instances.
- */
-@Slf4j
 @Service
 public class DynamicDataSourceManager {
 
-    // Cache to store JdbcTemplate instances by their key
-    private final Map<String, JdbcTemplate> dataSourceCache = new ConcurrentHashMap<>();
+    private final Map<String, DataSource> dataSources = new HashMap<>();
+    private final Map<String, DatabaseConnector> connectors = new HashMap<>();
 
-//    @Autowired
-//    private DataSourceContextService dataSourceContextService;
+    public Connection connect(DatabaseCredentials credentials) throws SQLException {
+        String databaseType = credentials.getDatabaseType();
+        DatabaseConnector connector = getConnector(databaseType, credentials);
+        if (connector == null) {
+            connector = setConnector(databaseType, credentials);
+        }
+        return connector.connect(credentials);
+    }
 
-    /**
-     * Creates and tests a new database connection using the provided credentials.
-     *
-     * @param credentials the database credentials
-     * @return true if the connection is successful, false otherwise
-     */
-    public boolean createAndTestConnection(DatabaseCredentials credentials) {
-        String key = generateKeyForUserDataSource(credentials);
-        JdbcTemplate jdbcTemplate = dataSourceCache.computeIfAbsent(key, k -> {
-            DataSource dataSource = createDataSource(credentials);
-            return new JdbcTemplate(dataSource);
-        });
+    public String getConnectionString(DatabaseCredentials credentials) {
+        return String.format("%s:%d/%s",
+                credentials.getHost(),
+                credentials.getPort(),
+                credentials.getDatabaseName());
+    }
 
-        if (testConnection(jdbcTemplate)) {
-            DataSourceContextService.setCurrentTemplate(jdbcTemplate);
-            return true;
-        } else {
-            closeDataSource(key);
-            return false;
+    private DatabaseConnector getConnector(String databaseType, DatabaseCredentials credentials) {
+        String connectionString = getConnectionString(credentials);
+        return connectors.get(connectionString);
+    }
+
+    private DatabaseConnector setConnector(String databaseType, DatabaseCredentials credentials) {
+        String connectionString = getConnectionString(credentials);
+        DatabaseConnector connector = DatabaseConnectorFactory.getConnector(databaseType);
+        connectors.put(connectionString, connector);
+        return connector;
+    }
+
+    public JdbcTemplate getJdbcTemplateForDb(String connectionString) {
+        DataSource dataSource = dataSources.get(connectionString);
+        if (dataSource == null) {
+            throw new IllegalArgumentException("No DataSource found for connection string: " + connectionString);
+        }
+        return new JdbcTemplate(dataSource);
+    }
+
+    public List<String> listTables(String databaseType, Connection connection) throws SQLException {
+        DatabaseConnector connector = connectors.get(getConnectionStringFromConnection(connection));
+        if (connector == null) {
+            throw new IllegalArgumentException("No connector found for database type: " + databaseType);
+        }
+        return connector.listTables(connection);
+    }
+
+    public List<String> listColumns(String databaseType, Connection connection, String tableName) throws SQLException {
+        DatabaseConnector connector = connectors.get(getConnectionStringFromConnection(connection));
+        if (connector == null) {
+            throw new IllegalArgumentException("No connector found for database type: " + databaseType);
+        }
+        return connector.listColumns(connection, tableName);
+    }
+
+    public ResultSet executeQuery(String databaseType, Connection connection, String query) throws SQLException {
+        DatabaseConnector connector = connectors.get(getConnectionStringFromConnection(connection));
+        if (connector == null) {
+            throw new IllegalArgumentException("No connector found for database type: " + databaseType);
+        }
+        return connector.executeQuery(connection, query);
+    }
+
+    public void closeConnection(String databaseType, Connection connection) throws SQLException {
+        DatabaseConnector connector = connectors.get(getConnectionStringFromConnection(connection));
+        if (connector != null) {
+            connector.closeConnection(connection);
         }
     }
 
-    /**
-     * Tests the connection using the provided JdbcTemplate.
-     *
-     * @param jdbcTemplate the JdbcTemplate to test
-     * @return true if the connection is successful, false otherwise
-     */
-    private boolean testConnection(JdbcTemplate jdbcTemplate) {
-        try {
-            jdbcTemplate.queryForObject("SELECT 1", Integer.class);
-            return true;
-        } catch (Exception e) {
-            log.error("Error testing connection", e);
-            DataSourceContextService.clear();
-            return false;
-        }
+    private String getConnectionStringFromConnection(Connection connection) throws SQLException {
+        return String.format("%s:%d/%s",
+                connection.getMetaData().getURL(),
+                connection.getMetaData().getDatabaseMajorVersion(),
+                connection.getCatalog());
     }
 
-    /**
-     * Gets the JdbcTemplate for the specified database key.
-     *
-     * @param key the key for the database
-     * @return the JdbcTemplate, or the current context template if not found
-     */
-    public JdbcTemplate getJdbcTemplateForDb(String key) {
-        return dataSourceCache.getOrDefault(key, DataSourceContextService.getCurrentTemplate());
-    }
-
-    /**
-     * Creates a DataSource using the provided credentials.
-     *
-     * @param credentials the database credentials
-     * @return the created DataSource
-     */
-    private DataSource createDataSource(DatabaseCredentials credentials) {
-        HikariConfig hikariConfig = new HikariConfig();
-        hikariConfig.setDriverClassName("org.postgresql.Driver"); // TODO: Support other databases and change Driver Dynamically
-        hikariConfig.setJdbcUrl("jdbc:postgresql://" + credentials.getHost() + ":" + credentials.getPort() + "/" + credentials.getDatabaseName());
-        hikariConfig.setUsername(credentials.getUserName());
-        hikariConfig.setPassword(credentials.getPassword());
-        return new HikariDataSource(hikariConfig);
-    }
-
-    /**
-     * Generates a unique key based on the database credentials.
-     *
-     * @param credentials the database credentials
-     * @return the generated key
-     */
-    private String generateKeyForUserDataSource(DatabaseCredentials credentials) {
-        // TODO: Implement a better key generation
-        return credentials.getDatabaseManager() + "-" + credentials.getHost() + "-" + credentials.getPort() + "-" + credentials.getDatabaseName() + "-" + credentials.getUserName() + "-" + credentials.getPassword();
-    }
-
-    /**
-     * Closes the data source for the specified key.
-     *
-     * @param key the key for the data source to close
-     */
-    public void closeDataSource(String key) {
-        JdbcTemplate jdbcTemplate = dataSourceCache.remove(key);
-        DataSourceContextService.clear();
-        if (jdbcTemplate != null) {
-            DataSource dataSource = jdbcTemplate.getDataSource();
-            if (dataSource instanceof HikariDataSource) {
-                ((HikariDataSource) dataSource).close();
-            }
-        }
-    }
-
-    /**
-     * Generates a key for the given database credentials.
-     *
-     * @param credentials the database credentials
-     * @return the generated key
-     */
-    public String getKey(DatabaseCredentials credentials) {
-        return generateKeyForUserDataSource(credentials);
+    public void registerDataSource(String connectionString, DataSource dataSource) {
+        dataSources.put(connectionString, dataSource);
     }
 }

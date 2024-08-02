@@ -1,4 +1,4 @@
-package com.fordevs.dynamicqueryengine.service;
+package com.fordevs.dynamicqueryengine.connector;
 
 import com.fordevs.dynamicqueryengine.dto.DatabaseCredentials;
 
@@ -7,20 +7,15 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public interface DatabaseService {
+public interface DatabaseConnector {
 
-    // Method to establish a connection to the database using provided credentials
     Connection connect(DatabaseCredentials credentials) throws SQLException;
 
-    // Method to list all tables in the connected database
     List<String> listTables(Connection connection) throws SQLException;
 
-    // Method to list all columns in a specified table
     List<String> listColumns(Connection connection, String tableName) throws SQLException;
 
-    // Method to execute a SQL query and return the ResultSet
     ResultSet executeQuery(Connection connection, String query) throws SQLException;
 
-    // Method to close the database connection
     void closeConnection(Connection connection) throws SQLException;
 }
